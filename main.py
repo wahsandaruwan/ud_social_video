@@ -28,3 +28,10 @@ def extract_urls(text: str):
             seen.add(u)
             result.append(u)
     return result
+
+def is_ffmpeg_available() -> bool:
+    """
+    Checks if ffmpeg is available on the system PATH.
+    Returns True if found, False otherwise.
+    """
+    return shutil.which("ffmpeg") is not None
