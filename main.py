@@ -183,3 +183,23 @@ class DownloaderApp:
         path = filedialog.askopenfilename(title="Select cookies.txt file")
         if path:
             self.cookies_path_var.set(path)
+
+    def append_log(self, text: str):
+        """
+        Appends a line to the log output area.
+        """
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text.strip() + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def set_progress(self, percent: float, label: str):
+        """
+        Updates the progress bar and its label.
+        """
+        try:
+            val = float(percent)
+        except Exception:
+            val = 0.0
+        self.progress["value"] = max(0.0, min(100.0, val))
+        self.progress_lbl.config(text=label)
