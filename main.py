@@ -167,3 +167,11 @@ class DownloaderApp:
         container.columnconfigure(2, weight=0)
         container.rowconfigure(1, weight=0)
         container.rowconfigure(11, weight=1)
+
+    def browse_output_dir(self):
+        """
+        Opens a dialog for selecting the download output directory.
+        """
+        path = filedialog.askdirectory(initialdir=self.output_dir_var.get() or DEFAULT_OUTPUT_DIR, title="Select download folder")
+        if path:
+            self.output_dir_var.set(path)
