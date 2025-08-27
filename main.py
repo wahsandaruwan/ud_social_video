@@ -203,3 +203,49 @@ class DownloaderApp:
             val = 0.0
         self.progress["value"] = max(0.0, min(100.0, val))
         self.progress_lbl.config(text=label)
+
+    def request_stop(self):
+        """
+        Sets stop flag to halt downloads after current finishes.
+        """
+        self.stop_requested = True
+        self.append_log("Stop requested. The current download will finish; no new downloads will start.")
+        self.stop_btn.config(state="disabled")
+
+    def start_download(self):
+        """
+        Begins the download thread for all URLs in the list.
+        """
+        if self.downloading:
+            return
+
+        raw = self.url_text.get("1.0", "end").strip()
+        urls = extract_urls(raw)
+        if not urls:
+            messagebox.showwarning(APP_TITLE, "Please paste at least one valid URL.")
+            return
+
+        outdir = self.output_dir_var.get().strip()
+        if not outdir:
+            messagebox.showwarning(APP_TITLE, "Please choose a download folder.")
+            return
+
+        # Block MP3 when ffmpeg is missing
+        if self.format_var.get() == "Audio only (MP3)" and not self.ffmpeg_available:
+            messagebox.showerror(APP_TITLE, "FFmpeg is required for MP3 extraction.\nPlease install FFmpeg or choose 'Best video (MP4)'.")
+            return
+
+        os.makedirs(outdir, exist_ok=True)
+
+        self.downloading = True
+        self.stop_requested = False
+        self.download_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.set_progress(0, "Starting…")
+        self.append_log(f"Output folder: {outdir}")
+        self.append_log(f"Total URLs: {len(urls)}")
+        if not self.ffmpeg_available:
+            self.append_log("FFmpeg not found: falling back to non‑merging (progressive) formats for video; MP3 disabled.")
+
+        thread = threading.Thread(target=self._download_thread, args=(urls, outdir), daemon=True)
+        thread.start()
