@@ -58,3 +58,28 @@ class TkLogger:
 
     def error(self, msg):
         self.write_fn(f"Error: {msg}")
+
+# ----------- Main Application Class -----------
+
+class DownloaderApp:
+    """
+    Main desktop application class for video downloading.
+    Manages UI, user actions, and download logic.
+    """
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title(APP_TITLE)
+        self.root.geometry("820x580")
+        self.root.minsize(720, 540)
+
+        self.downloading = False
+        self.stop_requested = False
+        self.ffmpeg_available = is_ffmpeg_available()
+
+        # UI variables
+        self.output_dir_var = tk.StringVar(value=DEFAULT_OUTPUT_DIR)
+        self.format_var = tk.StringVar(value="Best video (MP4)")
+        self.embed_thumb_var = tk.BooleanVar(value=True)
+        self.cookies_path_var = tk.StringVar(value="")
+
+        self._build_ui()
