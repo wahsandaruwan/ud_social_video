@@ -175,3 +175,11 @@ class DownloaderApp:
         path = filedialog.askdirectory(initialdir=self.output_dir_var.get() or DEFAULT_OUTPUT_DIR, title="Select download folder")
         if path:
             self.output_dir_var.set(path)
+
+    def browse_cookies(self):
+        """
+        Opens a dialog for selecting a cookies.txt file.
+        """
+        path = filedialog.askopenfilename(title="Select cookies.txt file")
+        if path:
+            self.cookies_path_var.set(path)
