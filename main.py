@@ -249,3 +249,25 @@ class DownloaderApp:
 
         thread = threading.Thread(target=self._download_thread, args=(urls, outdir), daemon=True)
         thread.start()
+
+    def _download_thread(self, urls, outdir):
+        """
+        Thread target: Downloads all URLs one by one.
+        """
+        completed = 0
+        for url in urls:
+            if self.stop_requested and completed > 0:
+                break
+            self._download_single(url, outdir)
+            completed += 1
+        self.root.after(0, self._finish_ui)
+
+    def _finish_ui(self):
+        """
+        Resets UI state on completion of all downloads.
+        """
+        self.downloading = False
+        self.download_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.set_progress(0, "Idle")
+        self.append_log("All done.")
