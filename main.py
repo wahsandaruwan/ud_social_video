@@ -271,3 +271,115 @@ class DownloaderApp:
         self.stop_btn.config(state="disabled")
         self.set_progress(0, "Idle")
         self.append_log("All done.")
+
+    def _download_single(self, url: str, outdir: str):
+        """
+        Downloads a single video/audio from the given URL using yt-dlp,
+        with appropriate options for chosen format and ffmpeg availability.
+        """
+        self.root.after(0, lambda: self.append_log(f"=== Downloading: {url} ==="))
+
+        mode = self.format_var.get()
+        want_audio = (mode == "Audio only (MP3)")
+
+        # Helper functions for progress formatting
+        def humanize_size(b):
+            try:
+                b = float(b)
+            except Exception:
+                return "?"
+            units = ["B", "KB", "MB", "GB", "TB"]
+            i = 0
+            while b >= 1024 and i < len(units) - 1:
+                b /= 1024.0
+                i += 1
+            return f"{b:.1f} {units[i]}"
+
+        def humanize_speed(bps):
+            if not bps:
+                return "?"
+            return f"{humanize_size(bps)}/s"
+
+        def humanize_time(sec):
+            if sec is None:
+                return "?"
+            try:
+                sec = int(sec)
+            except Exception:
+                return "?"
+            h, rem = divmod(sec, 3600)
+            m, s = divmod(rem, 60)
+            if h > 0:
+                return f"{h:d}h {m:02d}m {s:02d}s"
+            if m > 0:
+                return f"{m:d}m {s:02d}s"
+            return f"{s:d}s"
+
+        # Called by yt-dlp to update download progress
+        def progress_hook(d):
+            status = d.get("status")
+            if status == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                done = d.get("downloaded_bytes", 0)
+                percent = (done / float(total) * 100.0) if total else 0.0
+                spd = humanize_speed(d.get("speed"))
+                eta = humanize_time(d.get("eta"))
+                msg = "Downloading… %.1f%% | %s of %s | %s | ETA %s" % (
+                    percent, humanize_size(done), humanize_size(total), spd, eta
+                )
+                self.root.after(0, lambda: self.set_progress(percent, msg))
+            elif status == "finished":
+                self.root.after(0, lambda: self.set_progress(100, "Processing (post)…"))
+
+        outtmpl = os.path.join(outdir, "%(title).200B [%(id)s].%(ext)s")
+
+        ydl_opts = {
+            "outtmpl": outtmpl,
+            "progress_hooks": [progress_hook],
+            "logger": TkLogger(self.append_log),
+            "noplaylist": True,
+            "retries": 10,
+            "ignoreerrors": False,
+            "quiet": True,
+        }
+
+        cookies_path = self.cookies_path_var.get().strip()
+        if cookies_path:
+            ydl_opts["cookiefile"] = cookies_path
+
+        try:
+            if want_audio:
+                # Audio extraction requires ffmpeg
+                if not self.ffmpeg_available:
+                    raise RuntimeError("FFmpeg is required for MP3 extraction but was not found.")
+                ydl_opts.update({
+                    "format": "bestaudio/best",
+                    "postprocessors": [
+                        {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+                        {"key": "FFmpegMetadata"},
+                    ],
+                })
+                if self.embed_thumb_var.get():
+                    ydl_opts.setdefault("postprocessors", []).append({"key": "EmbedThumbnail"})
+                    ydl_opts["writethumbnail"] = True
+            else:
+                if self.ffmpeg_available:
+                    # Best quality via separate streams; merge to MP4 when possible
+                    ydl_opts.update({
+                        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                        "merge_output_format": "mp4",
+                        "postprocessors": [{"key": "FFmpegMetadata"}],
+                    })
+                else:
+                    # No ffmpeg: pick a single progressive file (has audio), prefer mp4
+                    # On YouTube typically max 720p.
+                    ydl_opts.update({
+                        "format": "best[acodec!=none][vcodec!=none][ext=mp4]/best[acodec!=none][vcodec!=none]",
+                    })
+                    self.root.after(0, lambda: self.append_log("FFmpeg not found: using progressive format (no merging)."))
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            self.root.after(0, lambda: self.append_log(f"✓ Finished: {url}"))
+        except Exception as e:
+            self.root.after(0, lambda: self.append_log("✗ Failed: %s\n  %s" % (url, e)))
