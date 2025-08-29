@@ -383,3 +383,25 @@ class DownloaderApp:
             self.root.after(0, lambda: self.append_log(f"✓ Finished: {url}"))
         except Exception as e:
             self.root.after(0, lambda: self.append_log("✗ Failed: %s\n  %s" % (url, e)))
+    
+# ----------- Application Entry Point -----------
+
+def main():
+    """
+    Starts the Tkinter main loop and application.
+    """
+    root = tk.Tk()
+    try:
+        style = ttk.Style()
+        for candidate in ("vista", "clam", "default"):
+            if candidate in style.theme_names():
+                style.theme_use(candidate)
+                break
+    except Exception:
+        pass
+
+    app = DownloaderApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
