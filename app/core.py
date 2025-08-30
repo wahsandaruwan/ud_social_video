@@ -1,0 +1,332 @@
+import os
+import threading
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import yt_dlp
+
+from app.config import APP_TITLE, DEFAULT_OUTPUT_DIR
+from app.utils import extract_urls, is_ffmpeg_available
+from app.logger import TkLogger
+
+class DownloaderApp:
+    """
+    Main desktop application class for video downloading.
+    Manages UI, user actions, and download logic.
+    """
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title(APP_TITLE)
+        self.root.geometry("820x580")
+        self.root.minsize(720, 540)
+
+        self.downloading = False
+        self.stop_requested = False
+        self.ffmpeg_available = is_ffmpeg_available()
+
+        # UI variables
+        self.output_dir_var = tk.StringVar(value=DEFAULT_OUTPUT_DIR)
+        self.format_var = tk.StringVar(value="Best video (MP4)")
+        self.embed_thumb_var = tk.BooleanVar(value=True)
+        self.cookies_path_var = tk.StringVar(value="")
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """
+        Sets up the Tkinter UI layout and widgets.
+        """
+        pad = 8
+
+        container = ttk.Frame(self.root, padding=pad)
+        container.pack(fill="both", expand=True)
+
+        # URL input
+        ttk.Label(container, text="Video URL(s):").grid(row=0, column=0, sticky="w", padx=pad, pady=(pad, 2))
+        self.url_text = tk.Text(container, height=4, wrap="word")
+        self.url_text.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=pad)
+        ttk.Label(container, text="Tip: You can paste multiple URLs on separate lines.").grid(row=2, column=0, columnspan=3, sticky="w", padx=pad, pady=(2, pad))
+
+        # Output directory selection
+        ttk.Label(container, text="Save to folder:").grid(row=3, column=0, sticky="w", padx=pad, pady=(pad, 2))
+        out_frame = ttk.Frame(container)
+        out_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=pad)
+        self.output_entry = ttk.Entry(out_frame, textvariable=self.output_dir_var)
+        self.output_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(out_frame, text="Browse…", command=self.browse_output_dir).pack(side="left", padx=(6, 0))
+
+        # Download format options
+        opts = ttk.Frame(container)
+        opts.grid(row=5, column=0, columnspan=3, sticky="ew", padx=pad, pady=(pad, 0))
+
+        ttk.Label(opts, text="Format:").pack(side="left")
+        self.format_combo = ttk.Combobox(
+            opts,
+            textvariable=self.format_var,
+            values=["Best video (MP4)", "Audio only (MP3)"],
+            state="readonly",
+            width=22,
+        )
+        self.format_combo.current(0)
+        self.format_combo.pack(side="left", padx=(6, 14))
+
+        self.embed_thumb_check = ttk.Checkbutton(opts, text="Embed thumbnail (for MP3)", variable=self.embed_thumb_var)
+        self.embed_thumb_check.pack(side="left")
+
+        # FFmpeg status indicator
+        self.ffmpeg_status_lbl = ttk.Label(
+            opts,
+            text=("FFmpeg: found" if self.ffmpeg_available else "FFmpeg: NOT found (video fallback, no MP3)"),
+            foreground=("green" if self.ffmpeg_available else "red")
+        )
+        self.ffmpeg_status_lbl.pack(side="left", padx=(16, 0))
+
+        # Cookies file selection
+        ttk.Label(container, text="Cookies file (optional, for private/age-restricted):").grid(row=6, column=0, sticky="w", padx=pad, pady=(pad, 2))
+        cookies_frame = ttk.Frame(container)
+        cookies_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=pad)
+        ttk.Entry(cookies_frame, textvariable=self.cookies_path_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(cookies_frame, text="Browse…", command=self.browse_cookies).pack(side="left", padx=(6, 0))
+
+        # Download and stop buttons
+        btns = ttk.Frame(container)
+        btns.grid(row=8, column=0, columnspan=3, sticky="ew", padx=pad, pady=(pad, 0))
+        self.download_btn = ttk.Button(btns, text="Download", command=self.start_download)
+        self.download_btn.pack(side="left")
+        self.stop_btn = ttk.Button(btns, text="Stop after current", command=self.request_stop, state="disabled")
+        self.stop_btn.pack(side="left", padx=(6, 0))
+
+        # Progress bar and label
+        prog = ttk.Frame(container)
+        prog.grid(row=9, column=0, columnspan=3, sticky="ew", padx=pad, pady=(pad, 0))
+        self.progress = ttk.Progressbar(prog, orient="horizontal", length=200, mode="determinate")
+        self.progress.pack(side="left", fill="x", expand=True)
+        self.progress_lbl = ttk.Label(prog, text="Idle")
+        self.progress_lbl.pack(side="left", padx=(8, 0))
+
+        # Log output area
+        ttk.Label(container, text="Log:").grid(row=10, column=0, sticky="w", padx=pad, pady=(pad, 2))
+        self.log_text = tk.Text(container, height=12, wrap="word", state="disabled")
+        self.log_text.grid(row=11, column=0, columnspan=3, sticky="nsew", padx=pad, pady=(0, pad))
+
+        # Configure resizing behavior
+        container.columnconfigure(0, weight=1)
+        container.columnconfigure(1, weight=0)
+        container.columnconfigure(2, weight=0)
+        container.rowconfigure(1, weight=0)
+        container.rowconfigure(11, weight=1)
+
+    def browse_output_dir(self):
+        """
+        Opens a dialog for selecting the download output directory.
+        """
+        path = filedialog.askdirectory(initialdir=self.output_dir_var.get() or DEFAULT_OUTPUT_DIR, title="Select download folder")
+        if path:
+            self.output_dir_var.set(path)
+
+    def browse_cookies(self):
+        """
+        Opens a dialog for selecting a cookies.txt file.
+        """
+        path = filedialog.askopenfilename(title="Select cookies.txt file")
+        if path:
+            self.cookies_path_var.set(path)
+
+    def append_log(self, text: str):
+        """
+        Appends a line to the log output area.
+        """
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text.strip() + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def set_progress(self, percent: float, label: str):
+        """
+        Updates the progress bar and its label.
+        """
+        try:
+            val = float(percent)
+        except Exception:
+            val = 0.0
+        self.progress["value"] = max(0.0, min(100.0, val))
+        self.progress_lbl.config(text=label)
+
+    def request_stop(self):
+        """
+        Sets stop flag to halt downloads after current finishes.
+        """
+        self.stop_requested = True
+        self.append_log("Stop requested. The current download will finish; no new downloads will start.")
+        self.stop_btn.config(state="disabled")
+
+    def start_download(self):
+        """
+        Begins the download thread for all URLs in the list.
+        """
+        if self.downloading:
+            return
+
+        raw = self.url_text.get("1.0", "end").strip()
+        urls = extract_urls(raw)
+        if not urls:
+            messagebox.showwarning(APP_TITLE, "Please paste at least one valid URL.")
+            return
+
+        outdir = self.output_dir_var.get().strip()
+        if not outdir:
+            messagebox.showwarning(APP_TITLE, "Please choose a download folder.")
+            return
+
+        # Block MP3 when ffmpeg is missing
+        if self.format_var.get() == "Audio only (MP3)" and not self.ffmpeg_available:
+            messagebox.showerror(APP_TITLE, "FFmpeg is required for MP3 extraction.\nPlease install FFmpeg or choose 'Best video (MP4)'.")
+            return
+
+        os.makedirs(outdir, exist_ok=True)
+
+        self.downloading = True
+        self.stop_requested = False
+        self.download_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.set_progress(0, "Starting…")
+        self.append_log(f"Output folder: {outdir}")
+        self.append_log(f"Total URLs: {len(urls)}")
+        if not self.ffmpeg_available:
+            self.append_log("FFmpeg not found: falling back to non‑merging (progressive) formats for video; MP3 disabled.")
+
+        thread = threading.Thread(target=self._download_thread, args=(urls, outdir), daemon=True)
+        thread.start()
+
+    def _download_thread(self, urls, outdir):
+        """
+        Thread target: Downloads all URLs one by one.
+        """
+        completed = 0
+        for url in urls:
+            if self.stop_requested and completed > 0:
+                break
+            self._download_single(url, outdir)
+            completed += 1
+        self.root.after(0, self._finish_ui)
+
+    def _finish_ui(self):
+        """
+        Resets UI state on completion of all downloads.
+        """
+        self.downloading = False
+        self.download_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.set_progress(0, "Idle")
+        self.append_log("All done.")
+
+    def _download_single(self, url: str, outdir: str):
+        """
+        Downloads a single video/audio from the given URL using yt-dlp,
+        with appropriate options for chosen format and ffmpeg availability.
+        """
+        self.root.after(0, lambda: self.append_log(f"=== Downloading: {url} ==="))
+
+        mode = self.format_var.get()
+        want_audio = (mode == "Audio only (MP3)")
+
+        # Helper functions for progress formatting
+        def humanize_size(b):
+            try:
+                b = float(b)
+            except Exception:
+                return "?"
+            units = ["B", "KB", "MB", "GB", "TB"]
+            i = 0
+            while b >= 1024 and i < len(units) - 1:
+                b /= 1024.0
+                i += 1
+            return f"{b:.1f} {units[i]}"
+
+        def humanize_speed(bps):
+            if not bps:
+                return "?"
+            return f"{humanize_size(bps)}/s"
+
+        def humanize_time(sec):
+            if sec is None:
+                return "?"
+            try:
+                sec = int(sec)
+            except Exception:
+                return "?"
+            h, rem = divmod(sec, 3600)
+            m, s = divmod(rem, 60)
+            if h > 0:
+                return f"{h:d}h {m:02d}m {s:02d}s"
+            if m > 0:
+                return f"{m:d}m {s:02d}s"
+            return f"{s:d}s"
+
+        # Called by yt-dlp to update download progress
+        def progress_hook(d):
+            status = d.get("status")
+            if status == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                done = d.get("downloaded_bytes", 0)
+                percent = (done / float(total) * 100.0) if total else 0.0
+                spd = humanize_speed(d.get("speed"))
+                eta = humanize_time(d.get("eta"))
+                msg = "Downloading… %.1f%% | %s of %s | %s | ETA %s" % (
+                    percent, humanize_size(done), humanize_size(total), spd, eta
+                )
+                self.root.after(0, lambda: self.set_progress(percent, msg))
+            elif status == "finished":
+                self.root.after(0, lambda: self.set_progress(100, "Processing (post)…"))
+
+        outtmpl = os.path.join(outdir, "%(title).200B [%(id)s].%(ext)s")
+
+        ydl_opts = {
+            "outtmpl": outtmpl,
+            "progress_hooks": [progress_hook],
+            "logger": TkLogger(self.append_log),
+            "noplaylist": True,
+            "retries": 10,
+            "ignoreerrors": False,
+            "quiet": True,
+        }
+
+        cookies_path = self.cookies_path_var.get().strip()
+        if cookies_path:
+            ydl_opts["cookiefile"] = cookies_path
+
+        try:
+            if want_audio:
+                # Audio extraction requires ffmpeg
+                if not self.ffmpeg_available:
+                    raise RuntimeError("FFmpeg is required for MP3 extraction but was not found.")
+                ydl_opts.update({
+                    "format": "bestaudio/best",
+                    "postprocessors": [
+                        {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+                        {"key": "FFmpegMetadata"},
+                    ],
+                })
+                if self.embed_thumb_var.get():
+                    ydl_opts.setdefault("postprocessors", []).append({"key": "EmbedThumbnail"})
+                    ydl_opts["writethumbnail"] = True
+            else:
+                if self.ffmpeg_available:
+                    # Best quality via separate streams; merge to MP4 when possible
+                    ydl_opts.update({
+                        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                        "merge_output_format": "mp4",
+                        "postprocessors": [{"key": "FFmpegMetadata"}],
+                    })
+                else:
+                    # No ffmpeg: pick a single progressive file (has audio), prefer mp4
+                    # On YouTube typically max 720p.
+                    ydl_opts.update({
+                        "format": "best[acodec!=none][vcodec!=none][ext=mp4]/best[acodec!=none][vcodec!=none]",
+                    })
+                    self.root.after(0, lambda: self.append_log("FFmpeg not found: using progressive format (no merging)."))
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            self.root.after(0, lambda: self.append_log(f"✓ Finished: {url}"))
+        except Exception as e:
+            self.root.after(0, lambda: self.append_log("✗ Failed: %s\n  %s" % (url, e)))
