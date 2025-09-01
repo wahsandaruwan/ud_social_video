@@ -1,4 +1,4 @@
-# Universal Video Downloader
+# UD - Video Downloader
 
 A cross-platform desktop app to download videos and audio from hundreds of social media sites and content platforms, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 
